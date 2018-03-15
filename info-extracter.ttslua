@@ -1,0 +1,151 @@
+-- InfoExtracter
+
+-- constants
+version = '0.9.0'
+url = 'https://github.com/indvd00m/info-extracter'
+mainColor = {102/255, 153/255, 153/255}
+defaultButtonColor = {255/255, 255/255, 255/255}
+
+-- variables
+extractEmpty = false
+extractedInfo = {
+
+}
+
+-- code
+function onSave()
+    local persistence = {
+        extractEmpty = extractEmpty,
+        extractedInfo = extractedInfo
+    }
+    local json = JSON.encode(persistence)
+    return json
+end
+
+function onLoad(savedState)
+    if savedState ~= nil and savedState ~= "" then
+        local persistence = JSON.decode(savedState)
+        extractedInfo = persistence.extractedInfo
+    end
+
+    createButtons()
+
+    self.setName('InfoExtracter')
+    self.setDescription('\z
+        InfoExtracter is a tool for extracting in-game objects info \z
+        in JSON-format. Version ' .. version .. '. \n\n' .. url)
+    self.setColorTint(mainColor)
+end
+
+function extractInfo()
+    print('Starting extraction...')
+    local info = {}
+    local allObjects = getAllObjects()
+    for index, object in pairs(allObjects) do
+        local guid = object.getGUID()
+        if (guid ~= self.guid) then
+            local name = object.getName()
+            local description = object.getDescription()
+            if
+                extractEmpty == true
+                or isEmpty(name) == false
+                or isEmpty(description) == false
+            then
+                info[guid] = {
+                    guid = guid,
+                    name = name,
+                    description = description
+                }
+            end
+        end
+    end
+
+    table.sort(info, objectsComparator)
+    local count = length(info)
+
+    extractedInfo = info
+    print('Information from ' .. count .. ' objects is extracted.')
+end
+
+function objectsComparator(o1, o2)
+    return o1.guid < o2.guid
+end
+
+function objectsFieldsComparator(o1, o2)
+    return o1.guid < o2.guid
+end
+
+function isEmpty(str)
+    if str == nil then
+        return true
+    end
+    if string.len(str) == 0 then
+        return true
+    end
+    return false
+end
+
+function saveToNotes()
+    local jsonInfo = JSON.encode_pretty(extractedInfo)
+    local tabName = 'InfoExtracter ' .. os.date('%Y-%m-%d %H:%M:%S')
+    local tabNumber = addNotebookTab({
+        title = tabName,
+        body  = jsonInfo
+    })
+    print('Extracted info saved to new tab #' .. tabNumber .. ' "' .. tabName .. '".')
+end
+
+function length(table)
+    local count = 0
+    for _ in pairs(table) do
+        count = count + 1
+    end
+    return count
+end
+
+function clone (t) -- deep-copy a table
+    if type(t) ~= "table" then return t end
+    local meta = getmetatable(t)
+    local target = {}
+    for k, v in pairs(t) do
+        if type(v) == "table" then
+            target[k] = clone(v)
+        else
+            target[k] = v
+        end
+    end
+    setmetatable(target, meta)
+    return target
+end
+
+function createButtons()
+    self.createButton({
+        click_function = 'extractInfo',
+        function_owner = self,
+        label          = 'Extract',
+        position       = {0.3, 0.5, 0.3},
+        rotation       = {0, 180, 0},
+        -- scale          = -- Vector,
+        width          = 150,
+        height         = 100,
+        font_size      = 40,
+        color          = defaultButtonColor,
+        -- font_color     = -- Color,
+        tooltip        = 'Extract info from all in-game objects',
+    })
+    self.createButton({
+        click_function = 'saveToNotes',
+        function_owner = self,
+        label          = 'Save',
+        position       = {0.3, 0.5, 0},
+        rotation       = {0, 180, 0},
+        -- scale          = -- Vector,
+        width          = 150,
+        height         = 100,
+        font_size      = 40,
+        color          = defaultButtonColor,
+        -- font_color     = -- Color,
+        tooltip        = 'Save extracted information to Notebook in JSON-format',
+    })
+end
+
