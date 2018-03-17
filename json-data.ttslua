@@ -1,8 +1,8 @@
--- InfoExtracter
+-- JsonData
 
 -- constants
 version = '0.9.0'
-url = 'https://github.com/indvd00m/info-extracter'
+url = 'https://github.com/indvd00m/json-data'
 mainColor = {102/255, 153/255, 153/255}
 defaultButtonColor = {255/255, 255/255, 255/255}
 
@@ -30,9 +30,9 @@ function onLoad(savedState)
 
     createButtons()
 
-    self.setName('InfoExtracter')
+    self.setName('JsonData')
     self.setDescription('\z
-        InfoExtracter is a tool for extracting in-game objects info \z
+        JsonData is a tool for extracting in-game objects info \z
         in JSON-format. Version ' .. version .. '. \n\n' .. url)
     self.setColorTint(mainColor)
 end
@@ -87,7 +87,7 @@ end
 
 function saveToNotes()
     local jsonInfo = JSON.encode_pretty(extractedInfo)
-    local tabName = 'InfoExtracter ' .. os.date('%Y-%m-%d %H:%M:%S')
+    local tabName = 'JsonData ' .. os.date('%Y-%m-%d %H:%M:%S')
     local tabNumber = addNotebookTab({
         title = tabName,
         body  = jsonInfo

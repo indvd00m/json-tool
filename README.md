@@ -1,18 +1,18 @@
-# InfoExtracter 
+# JsonData 
 
 Scripting tool for Tabletop Simulator.
 
-InfoExtracter is a tool for extracting in-game objects info in JSON-format.
+JsonData is a tool for extracting in-game objects info in JSON-format.
 
 ## Using
 
-Subscribe to InfoExtracter at Steam Workshop:
+Subscribe to JsonData at Steam Workshop:
 
 https://steamcommunity.com/sharedfiles/filedetails/?id=1332014467
 
-Load Tabletop Simulator, select Workshop section and load InfoExtracter. 
-Click on InfoExtracter with right button and select "Save object". Load any other 
-game and move InfoExtracter to table from "Saved objects" panel.
+Load Tabletop Simulator, select Workshop section and load JsonData. 
+Click on JsonData with right button and select "Save object". Load any other 
+game and move JsonData to table from "Saved objects" panel.
 
 ## Issue tracking
 
@@ -30,6 +30,6 @@ Contributions are welcome, but there are no guarantees that they are accepted as
 
 ## License & Author
 
-InfoExtracter is distributed under Apache License 2.0. For license terms, see LICENSE.
+JsonData is distributed under Apache License 2.0. For license terms, see LICENSE.
 
-InfoExtracter is written by David E. Veliev.
+JsonData is written by David E. Veliev.
