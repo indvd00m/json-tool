@@ -1,22 +1,29 @@
 -- JsonData
+-- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '0.9.0'
+version = '1.1.2'
 url = 'https://github.com/indvd00m/json-data'
+configTabName = 'json.conf'
+dataTabName = 'json.data'
+exportBackupTabNamePrefix = 'json.exp.backup'
+importBackupTabNamePrefix = 'json.imp.backup'
+tabsColor = 'Grey'
 mainColor = {102/255, 153/255, 153/255}
 defaultButtonColor = {255/255, 255/255, 255/255}
+defaultConfig = {
+    exportEmptyData = false,
+    createExportBackups = true,
+    createImportBackups = true
+}
 
 -- variables
-extractEmpty = false
-extractedInfo = {
-
-}
+config = {}
 
 -- code
 function onSave()
     local persistence = {
-        extractEmpty = extractEmpty,
-        extractedInfo = extractedInfo
+        config = config
     }
     local json = JSON.encode(persistence)
     return json
@@ -25,21 +32,172 @@ end
 function onLoad(savedState)
     if savedState ~= nil and savedState ~= "" then
         local persistence = JSON.decode(savedState)
-        extractedInfo = persistence.extractedInfo
+        applyConfig(persistence.config, true)
+    else
+        config = clone(defaultConfig)
     end
 
     createButtons()
+    syncTabs()
 
     self.setName('JsonData')
     self.setDescription('\z
-        JsonData is a tool for extracting in-game objects info \z
-        in JSON-format. Version ' .. version .. '. \n\n' .. url)
+        JsonData is a tool for exporting and importing information about \z
+        in-game objects in JSON-format. JsonData works with Notebook tabs \z
+        for all actions. All needed tabs would created automatically. \z
+        Exporting and importing processes use tab "' .. dataTabName .. '" for \z
+        saving or getting information in  JSON-format. Before every importing \z
+        and exporting JsonData would save  backup to tabs with prefix \z
+        "' .. exportBackupTabNamePrefix .. '" and \z
+        "' .. importBackupTabNamePrefix .. '". Export and import \z
+        configuration is saved in tab "' .. configTabName .. '"". Before \z
+        every import and export configuration would be read from this tab. \z
+        \n\nNote: sometimes Tabletop Simulator incorrectly works with \z
+        Notebook tabs. If you did not see any data in created tabs try to \z
+        remove all tabs and then run Export or Import again.\z
+        \n\nVersion ' .. version .. '. \n\n' .. url)
     self.setColorTint(mainColor)
 end
 
-function extractInfo()
-    print('Starting extraction...')
-    local info = {}
+function syncTabs()
+    local configTab = getTabByName(configTabName)
+    if (configTab == nil) then
+        addNotebookTab({
+            title = configTabName,
+            body  = '',
+            color = tabsColor
+        })
+        configTab = getTabByName(configTabName)
+        writeConfigToTab(configTab)
+    else
+        if (readConfigFromTab(configTab) == true) then
+            writeConfigToTab(configTab)
+        end
+    end
+
+    local dataTab = getTabByName(dataTabName)
+    if (dataTab == nil) then
+        addNotebookTab({
+            title = dataTabName,
+            body  = '',
+            color = tabsColor
+        })
+        dataTab = getTabByName(dataTabName)
+        writeDataToTab(dataTab, {})
+    end
+end
+
+function getTabByName(tabName)
+    local tabs = getNotebookTabs()
+    for index, tab in pairs(tabs) do
+        if tab.title == tabName then
+            return tab
+        end
+    end
+    return nil
+end
+
+function readConfigFromTab(configTab)
+    if (configTab == nil) then
+        return false
+    end
+    local tabContent = configTab.body
+    if (tabContent == nil) then
+        return false
+    end
+    local userConfig = JSON.decode(tabContent)
+    return applyConfig(userConfig, false)
+end
+
+
+function applyConfig(newConfig, allowIncorrectConfig)
+    local correctConfig = true
+    local tmpConfig = {}
+    for option, defaultValue in pairs(defaultConfig) do
+        local newValue = nil
+        if (newConfig != nil) then
+            newValue = newConfig[option]
+        end
+        if (newValue == nil) then
+            correctConfig = false
+            tmpConfig[option] = defaultValue
+        else
+            tmpConfig[option] = newValue
+        end
+    end
+    if (correctConfig == true or allowIncorrectConfig) then
+        config = tmpConfig
+        return true
+    else
+        return false
+    end
+end
+
+function writeConfigToTab(configTab)
+    local tabContent = JSON.encode_pretty(config)
+    editNotebookTab({
+        index = configTab.index,
+        title = configTabName,
+        body  = tabContent,
+        color = tabsColor
+    })
+end
+
+function readDataFromTab(dataTab)
+    if (dataTab == nil) then
+        return nil
+    end
+    local tabContent = dataTab.body
+    if (tabContent == nil) then
+        return false
+    end
+    local data = JSON.decode(tabContent)
+    return data
+end
+
+function writeDataToTab(dataTab, data)
+    local tabContent = JSON.encode_pretty(data)
+    editNotebookTab({
+        index = dataTab.index,
+        title = dataTabName,
+        body  = tabContent,
+        color = tabsColor
+    })
+end
+
+function exportData()
+    print('Starting exporting...')
+
+    syncTabs()
+    local dataTab = getTabByName(dataTabName)
+
+    if (config.createExportBackups == true) then
+        local tabName = createTabBackup(dataTab, exportBackupTabNamePrefix)
+        print('Data backuped to tab "' .. tabName .. '".')
+    else
+        print('Backup is disabled.')
+    end
+
+    local data = getDataForExport()
+    writeDataToTab(dataTab, data)
+    local count = length(data)
+    print('Exported data from ' .. count .. ' in-game objects.')
+
+    print('Export done.')
+end
+
+function createTabBackup(tab, tabNamePrefix)
+    local tabName = tabNamePrefix .. '_' .. os.date('%Y-%m-%d_%H:%M:%S')
+    addNotebookTab({
+        title = tabName,
+        body  = tab.body,
+        color = tabsColor
+    })
+    return tabName
+end
+
+function getDataForExport()
+    local data = {}
     local allObjects = getAllObjects()
     for index, object in pairs(allObjects) do
         local guid = object.getGUID()
@@ -47,11 +205,11 @@ function extractInfo()
             local name = object.getName()
             local description = object.getDescription()
             if
-                extractEmpty == true
+                config.exportEmptyData == true
                 or isEmpty(name) == false
                 or isEmpty(description) == false
             then
-                info[guid] = {
+                data[guid] = {
                     guid = guid,
                     name = name,
                     description = description
@@ -60,11 +218,68 @@ function extractInfo()
         end
     end
 
-    table.sort(info, objectsComparator)
-    local count = length(info)
+    table.sort(data, objectsComparator)
+    return data
+end
 
-    extractedInfo = info
-    print('Information from ' .. count .. ' objects is extracted.')
+function importData()
+    print('Starting importing...')
+
+    syncTabs()
+    local dataTab = getTabByName(dataTabName)
+    local data = readDataFromTab(dataTab)
+    local backup = createBackupForData(data)
+
+    if (config.createImportBackups == true) then
+        local tabName = createImportBackupTab(backup, importBackupTabNamePrefix)
+        print('Data backuped to tab "' .. tabName .. '".')
+    else
+        print('Backup is disabled.')
+    end
+
+    local count = applyData(data)
+    print('Imported data to ' .. count .. ' in-game objects.')
+
+    print('Import done.')
+end
+
+function createBackupForData(data)
+    local backup = {}
+    for guid, fields in pairs(data) do
+        local obj = getObjectFromGUID(guid)
+        if (obj ~= nil) then
+            backup[guid] = {
+                guid = obj.getGUID(),
+                name = obj.getName(),
+                description = obj.getDescription()
+            }
+        end
+    end
+    return backup
+end
+
+function applyData(data)
+    local count = 0
+    for guid, fields in pairs(data) do
+        local obj = getObjectFromGUID(guid)
+        if (obj ~= nil) then
+            obj.setName(fields.name)
+            obj.setDescription(fields.description)
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function createImportBackupTab(backup, tabNamePrefix)
+    local tabName = tabNamePrefix .. '_' .. os.date('%Y-%m-%d_%H:%M:%S')
+    local content = JSON.encode_pretty(backup)
+    addNotebookTab({
+        title = tabName,
+        body  = content,
+        color = tabsColor
+    })
+    return tabName
 end
 
 function objectsComparator(o1, o2)
@@ -85,16 +300,6 @@ function isEmpty(str)
     return false
 end
 
-function saveToNotes()
-    local jsonInfo = JSON.encode_pretty(extractedInfo)
-    local tabName = 'JsonData ' .. os.date('%Y-%m-%d %H:%M:%S')
-    local tabNumber = addNotebookTab({
-        title = tabName,
-        body  = jsonInfo
-    })
-    print('Extracted info saved to new tab #' .. tabNumber .. ' "' .. tabName .. '".')
-end
-
 function length(table)
     local count = 0
     for _ in pairs(table) do
@@ -104,7 +309,9 @@ function length(table)
 end
 
 function clone (t) -- deep-copy a table
-    if type(t) ~= "table" then return t end
+    if type(t) ~= "table" then
+        return t
+    end
     local meta = getmetatable(t)
     local target = {}
     for k, v in pairs(t) do
@@ -120,9 +327,9 @@ end
 
 function createButtons()
     self.createButton({
-        click_function = 'extractInfo',
+        click_function = 'exportData',
         function_owner = self,
-        label          = 'Extract',
+        label          = 'Export',
         position       = {0.3, 0.5, 0.3},
         rotation       = {0, 180, 0},
         -- scale          = -- Vector,
@@ -131,12 +338,13 @@ function createButtons()
         font_size      = 40,
         color          = defaultButtonColor,
         -- font_color     = -- Color,
-        tooltip        = 'Extract info from all in-game objects',
+        tooltip        = 'Export information about in-game objects to tab "' ..
+            dataTabName .. '" in JSON-format',
     })
     self.createButton({
-        click_function = 'saveToNotes',
+        click_function = 'importData',
         function_owner = self,
-        label          = 'Save',
+        label          = 'Import',
         position       = {0.3, 0.5, 0},
         rotation       = {0, 180, 0},
         -- scale          = -- Vector,
@@ -145,7 +353,7 @@ function createButtons()
         font_size      = 40,
         color          = defaultButtonColor,
         -- font_color     = -- Color,
-        tooltip        = 'Save extracted information to Notebook in JSON-format',
+        tooltip        = 'Import information about in-game objects from tab "' ..
+            dataTabName .. '" in JSON-format',
     })
 end
-
