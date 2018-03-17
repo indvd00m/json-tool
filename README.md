@@ -2,7 +2,9 @@
 
 Scripting tool for Tabletop Simulator.
 
-JsonData is a tool for extracting in-game objects info in JSON-format.
+JsonData is a tool for exporting and importing information about in-game objects in JSON-format. JsonData works with Notebook tabs for all actions. All needed tabs would created automatically. Exporting and importing processes use tab "json.data" for saving or getting information in JSON-format. Before every importing and exporting JsonData would save backup to tabs with prefix "json.exp.backup" and "json.imp.backup". Export and import configuration is saved in tab "json.conf". Before every import and export configuration would be read from this tab.
+
+Note: sometimes Tabletop Simulator incorrectly works with Notebook tabs. If you did not see any data in created tabs try to remove all tabs and then run Export or Import again.
 
 ## Using
 
