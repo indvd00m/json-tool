@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '1.3.0'
+version = '1.3.1'
 url = 'https://github.com/indvd00m/json-data'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -22,7 +22,7 @@ defaultConfig = {
     exportEmptyData = false,
     createExportBackups = true,
     createImportBackups = true,
-    processContainers = false,
+    processContainers = true,
     takeRelativePosition = {2, 0, 2}
 }
 
@@ -631,4 +631,3 @@ function createButtons()
         tooltip        = 'Stop process of export or import',
     })
 end
-
