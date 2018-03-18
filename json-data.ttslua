@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '1.2.0'
+version = '1.2.1'
 url = 'https://github.com/indvd00m/json-data'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -22,7 +22,8 @@ defaultConfig = {
     exportEmptyData = false,
     createExportBackups = true,
     createImportBackups = true,
-    processContainers = false
+    processContainers = false,
+    takeRelativePosition = {2, 0, 2}
 }
 
 -- variables
@@ -346,10 +347,12 @@ function asyncNext()
         -- not loaded yet, need wait and try again
         asyncPush(objectInfo)
         local container = getObjectFromGUID(objectInfo.containerGuid)
+        local position = container.positionToWorld(config.takeRelativePosition)
         container.takeObject({
             callback       = 'asyncNext',
             callback_owner = self,
-            guid           = objectInfo.guid
+            guid           = objectInfo.guid,
+            position       = position
         })
         return
     end
@@ -623,3 +626,4 @@ function createButtons()
         tooltip        = 'Stop process of export or import',
     })
 end
+
