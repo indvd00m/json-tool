@@ -1,9 +1,9 @@
--- JsonData
+-- JsonTool
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '1.3.1'
-url = 'https://github.com/indvd00m/json-data'
+version = '2.0.0'
+url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
 exportBackupTabNamePrefix = 'json.exp.backup'
@@ -66,14 +66,14 @@ function onLoad(savedState)
     -- on load always force write config to tab
     writeConfigToTab(getTabByName(configTabName))
 
-    self.setName('JsonData')
+    self.setName('JsonTool')
     self.setDescription('\z
-        JsonData is a tool for exporting and importing information about \z
-        in-game objects in JSON-format. JsonData works with Notebook tabs \z
+        JsonTool is a tool for exporting and importing information about \z
+        in-game objects in JSON-format. JsonTool works with Notebook tabs \z
         for all actions. All needed tabs would created automatically. \z
         Exporting and importing processes use tab "' .. dataTabName .. '" for \z
         saving or getting information in  JSON-format. Before every importing \z
-        and exporting JsonData would save  backup to tabs with prefix \z
+        and exporting JsonTool would save  backup to tabs with prefix \z
         "' .. exportBackupTabNamePrefix .. '" and \z
         "' .. importBackupTabNamePrefix .. '". Export and import \z
         configuration is saved in tab "' .. configTabName .. '"". Before \z

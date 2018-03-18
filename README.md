@@ -1,20 +1,20 @@
-# JsonData 
+# JsonTool 
 
 Scripting tool for Tabletop Simulator.
 
-JsonData is a tool for exporting and importing information about in-game objects in JSON-format. JsonData works with Notebook tabs for all actions. All needed tabs would created automatically. Exporting and importing processes use tab "json.data" for saving or getting information in JSON-format. Before every importing and exporting JsonData would save backup to tabs with prefix "json.exp.backup" and "json.imp.backup". Export and import configuration is saved in tab "json.conf". Before every import and export configuration would be read from this tab.
+JsonTool is a tool for exporting and importing information about in-game objects in JSON-format. JsonTool works with Notebook tabs for all actions. All needed tabs would created automatically. Exporting and importing processes use tab "json.data" for saving or getting information in JSON-format. Before every importing and exporting JsonTool would save backup to tabs with prefix "json.exp.backup" and "json.imp.backup". Export and import configuration is saved in tab "json.conf". Before every import and export configuration would be read from this tab.
 
 Note: sometimes Tabletop Simulator incorrectly works with Notebook tabs. If you did not see any data in created tabs try to remove all tabs and then run Export or Import again.
 
 ## Using
 
-Subscribe to JsonData at Steam Workshop:
+Subscribe to JsonTool at Steam Workshop:
 
 https://steamcommunity.com/sharedfiles/filedetails/?id=1332014467
 
-Load Tabletop Simulator, select Workshop section and load JsonData. 
-Click on JsonData with right button and select "Save object". Load any other 
-game and move JsonData to table from "Saved objects" panel.
+Load Tabletop Simulator, select Workshop section and load JsonTool. 
+Click on JsonTool with right button and select "Save object". Load any other 
+game and move JsonTool to table from "Saved objects" panel.
 
 ## Issue tracking
 
@@ -32,6 +32,6 @@ Contributions are welcome, but there are no guarantees that they are accepted as
 
 ## License & Author
 
-JsonData is distributed under Apache License 2.0. For license terms, see LICENSE.
+JsonTool is distributed under Apache License 2.0. For license terms, see LICENSE.
 
-JsonData is written by David E. Veliev.
+JsonTool is written by David E. Veliev.
