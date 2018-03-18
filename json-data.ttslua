@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '1.2.1'
+version = '1.3.0'
 url = 'https://github.com/indvd00m/json-data'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -368,6 +368,11 @@ function asyncNext()
         if (config.processContainers == true) then
             local nestedGuids = {}
             if (object.tag == 'Bag') then
+                local nestedObjectsDescs = object.getObjects()
+                for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
+                    table.insert(nestedGuids, nestedObjectDesc.guid)
+                end
+            elseif (object.tag == 'Deck') then
                 local nestedObjectsDescs = object.getObjects()
                 for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
                     table.insert(nestedGuids, nestedObjectDesc.guid)
