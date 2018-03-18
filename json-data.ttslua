@@ -2,23 +2,43 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '1.1.2'
+version = '1.2.0'
 url = 'https://github.com/indvd00m/json-data'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
 exportBackupTabNamePrefix = 'json.exp.backup'
 importBackupTabNamePrefix = 'json.imp.backup'
 tabsColor = 'Grey'
+exportButtonLabel = 'Export'
+exportButtonTooltip = 'Export information about in-game objects to tab "' ..
+    dataTabName .. '" in JSON-format'
+importButtonLabel = 'Import'
+importButtonTooltip = 'Import information about in-game objects from tab "' ..
+    dataTabName .. '" in JSON-format'
 mainColor = {102/255, 153/255, 153/255}
+processColor = {255/255, 102/255, 102/255}
 defaultButtonColor = {255/255, 255/255, 255/255}
 defaultConfig = {
     exportEmptyData = false,
     createExportBackups = true,
-    createImportBackups = true
+    createImportBackups = true,
+    processContainers = false
 }
 
 -- variables
 config = {}
+data = nil
+async = {
+    inProcess = false,
+    processedGuids = nil,
+    stack = nil,
+    maxStackLength = 0,
+    progress = 0,
+    progressCount = nil,
+    objectProcessor = nil,
+    finishListener = nil,
+    count = 0
+}
 
 -- code
 function onSave()
@@ -37,8 +57,13 @@ function onLoad(savedState)
         config = clone(defaultConfig)
     end
 
+    updateForBackwardCompatibility()
+
     createButtons()
     syncTabs()
+
+    -- on load always force write config to tab
+    writeConfigToTab(getTabByName(configTabName))
 
     self.setName('JsonData')
     self.setDescription('\z
@@ -57,6 +82,15 @@ function onLoad(savedState)
         remove all tabs and then run Export or Import again.\z
         \n\nVersion ' .. version .. '. \n\n' .. url)
     self.setColorTint(mainColor)
+end
+
+function updateForBackwardCompatibility()
+    -- insert new config options if need
+    for option, defaultValue in pairs(defaultConfig) do
+        if (config[option] == nil) then
+            config[option] = defaultValue
+        end
+    end
 end
 
 function syncTabs()
@@ -108,7 +142,6 @@ function readConfigFromTab(configTab)
     local userConfig = JSON.decode(tabContent)
     return applyConfig(userConfig, false)
 end
-
 
 function applyConfig(newConfig, allowIncorrectConfig)
     local correctConfig = true
@@ -166,23 +199,46 @@ function writeDataToTab(dataTab, data)
 end
 
 function exportData()
-    print('Starting exporting...')
+    if (async.inProcess == true) then
+        print('WARN: async task already started')
+        return
+    end
+    print('Start exporting...')
 
     syncTabs()
-    local dataTab = getTabByName(dataTabName)
 
     if (config.createExportBackups == true) then
+        local dataTab = getTabByName(dataTabName)
         local tabName = createTabBackup(dataTab, exportBackupTabNamePrefix)
         print('Data backuped to tab "' .. tabName .. '".')
     else
         print('Backup is disabled.')
     end
 
-    local data = getDataForExport()
-    writeDataToTab(dataTab, data)
-    local count = length(data)
-    print('Exported data from ' .. count .. ' in-game objects.')
+    asyncExportStart()
+end
 
+function asyncExportStart()
+    print('Export started.')
+    data = {}
+
+    asyncStart(exportObjectToDataIfNeed, asyncExportStop)
+end
+
+function asyncExportStop(count)
+    table.sort(data, objectsComparator)
+
+    local dataTab = getTabByName(dataTabName)
+    writeDataToTab(dataTab, data)
+    print(count .. ' in-game objects exported.')
+
+    self.editButton({
+        index          = 0,
+        label          = exportButtonLabel,
+        tooltip        = exportButtonTooltip
+    })
+
+    data = nil
     print('Export done.')
 end
 
@@ -196,39 +252,233 @@ function createTabBackup(tab, tabNamePrefix)
     return tabName
 end
 
-function getDataForExport()
-    local data = {}
+-- start of async
+function asyncStart(asyncObjectProcessor, asyncFinishListener)
+    if (async.inProcess == true) then
+        print('WARN: async task already started')
+        return
+    end
+    self.setColorTint(processColor)
+    async.inProcess = true
+    async.processed = {}
+    async.stack = {}
+    async.maxStackLength = 0
+    async.progress = 0
+    async.progressCount = ''
+    async.objectProcessor = asyncObjectProcessor
+    async.finishListener = asyncFinishListener
+    async.count = 0
+
     local allObjects = getAllObjects()
     for index, object in pairs(allObjects) do
-        local guid = object.getGUID()
-        if (guid ~= self.guid) then
-            local name = object.getName()
-            local description = object.getDescription()
-            if
-                config.exportEmptyData == true
-                or isEmpty(name) == false
-                or isEmpty(description) == false
-            then
-                data[guid] = {
-                    guid = guid,
-                    name = name,
-                    description = description
-                }
+        asyncPush({
+            guid = object.guid,
+            containerGuid = nil
+        })
+    end
+    asyncNext()
+end
+
+function asyncStop()
+    local asyncFinishListener = async.finishListener
+    local count = async.count
+
+    async.inProcess = false
+    async.processed = nil
+    async.stack = nil
+    async.maxStackLength = 0
+    async.progress = 0
+    async.progressCount = nil
+    async.objectProcessor = nil
+    async.finishListener = nil
+    async.count = 0
+
+    if (asyncFinishListener) then
+        asyncFinishListener(count)
+    end
+
+    self.setColorTint(mainColor)
+end
+
+function asyncPush(objInfo)
+    table.insert(async.stack, objInfo)
+    local len = length(async.stack)
+    if (len > async.maxStackLength) then
+        async.maxStackLength = len
+    end
+    if (async.maxStackLength > 0) then
+        async.progress = 1 - len / async.maxStackLength
+        async.progressCount = string.format('%d/%d', async.maxStackLength - len, async.maxStackLength)
+    else
+        async.progress = 0
+        async.progressCount = ''
+    end
+end
+
+function asyncPop()
+    local len = length(async.stack)
+    local next = nil
+    if (len > 0) then
+        next = table.remove(async.stack)
+    end
+    if (async.maxStackLength > 0) then
+        async.progress = 1 - len / async.maxStackLength
+        async.progressCount = string.format('%d/%d', async.maxStackLength - len, async.maxStackLength)
+    else
+        async.progress = 0
+        async.progressCount = ''
+    end
+    return next
+end
+
+function asyncNext()
+    if (async.inProcess == false) then
+        asyncStop()
+        return
+    end
+    local objectInfo = asyncPop()
+    if (objectInfo == nil) then
+        asyncStop()
+        return
+    end
+    local object = getObjectFromGUID(objectInfo.guid)
+    if (object == nil) then
+        -- not loaded yet, need wait and try again
+        asyncPush(objectInfo)
+        local container = getObjectFromGUID(objectInfo.containerGuid)
+        container.takeObject({
+            callback       = 'asyncNext',
+            callback_owner = self,
+            guid           = objectInfo.guid
+        })
+        return
+    end
+    -- object loaded
+    local stackChanged = false
+    if (async.processed[object.guid] == nil) then
+        -- not processed
+        if async.objectProcessor(object) then
+            async.count = async.count + 1
+        end
+        async.processed[object.guid] = true
+        -- containers
+        if (config.processContainers == true) then
+            local nestedGuids = {}
+            if (object.tag == 'Bag') then
+                local nestedObjectsDescs = object.getObjects()
+                for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
+                    table.insert(nestedGuids, nestedObjectDesc.guid)
+                end
+            end
+            if (length(nestedGuids) > 0) then
+                -- has nested
+                stackChanged = true
+                asyncPush(objectInfo)
+                for index, nestedGuid in pairs(nestedGuids) do
+                    asyncPush({
+                        guid = nestedGuid,
+                        containerGuid = object.guid
+                    })
+                end
             end
         end
     end
+    if (stackChanged == false) then
+        -- put back to container if need
+        if (config.processContainers == true) then
+            if (objectInfo.containerGuid ~= nil) then
+                local container = getObjectFromGUID(objectInfo.containerGuid)
+                container.putObject(object)
+            end
+        end
+    end
+    asyncNext()
+end
+-- end of async
 
-    table.sort(data, objectsComparator)
-    return data
+function exportObjectToDataIfNeed(object)
+    if
+        isNeedExportByGuid(object.guid, data)
+        and isNeedExportByObject(object, data)
+    then
+        exportObjectToData(object)
+        return true
+    end
+    return false
+end
+
+-- start of exchange data block
+function exportObjectToData(object)
+    local percent = string.format('%.1f %%', async.progress * 100)
+    self.editButton({
+        index          = 0,
+        label          = percent,
+        tooltip        = async.progressCount
+    })
+
+    local guid = object.getGUID()
+    data[guid] = {
+        guid = guid,
+        name = object.getName(),
+        description = object.getDescription()
+    }
+end
+
+function importDataToObject(object)
+    local percent = string.format('%.1f %%', async.progress * 100)
+    self.editButton({
+        index          = 1,
+        label          = percent,
+        tooltip        = async.progressCount
+    })
+
+    local fields = data[object.getGUID()]
+    if (fields == nil) then
+        return false
+    end
+    object.setName(fields.name)
+    object.setDescription(fields.description)
+    return true
+end
+-- end of exchange data block
+
+function isNeedExportByGuid(guid, data)
+    -- self
+    if (guid == self.guid) then
+        return false
+    end
+    -- already processed
+    if (data[guid] ~= nil) then
+        return false
+    end
+    return true
+end
+
+function isNeedExportByObject(object, data)
+    -- empty values
+    local name = object.getName()
+    local description = object.getDescription()
+    if
+        config.exportEmptyData == false
+        and isEmpty(name) == true
+        and isEmpty(description) == true
+    then
+        return false
+    end
+    return true
 end
 
 function importData()
-    print('Starting importing...')
+    if (async.inProcess == true) then
+        print('WARN: async task already started')
+        return
+    end
+    print('Start importing...')
 
     syncTabs()
     local dataTab = getTabByName(dataTabName)
-    local data = readDataFromTab(dataTab)
-    local backup = createBackupForData(data)
+    local parsedData = readDataFromTab(dataTab)
+    local backup = createBackupForData(parsedData)
 
     if (config.createImportBackups == true) then
         local tabName = createImportBackupTab(backup, importBackupTabNamePrefix)
@@ -237,9 +487,26 @@ function importData()
         print('Backup is disabled.')
     end
 
-    local count = applyData(data)
-    print('Imported data to ' .. count .. ' in-game objects.')
+    asyncImportStart(parsedData)
+end
 
+function asyncImportStart(parsedData)
+    print('Export started.')
+    data = parsedData
+
+    asyncStart(importDataToObject, asyncImportStop)
+end
+
+function asyncImportStop(count)
+    print(count .. ' in-game objects imported.')
+
+    self.editButton({
+        index          = 1,
+        label          = importButtonLabel,
+        tooltip        = importButtonTooltip
+    })
+
+    data = nil
     print('Import done.')
 end
 
@@ -256,19 +523,6 @@ function createBackupForData(data)
         end
     end
     return backup
-end
-
-function applyData(data)
-    local count = 0
-    for guid, fields in pairs(data) do
-        local obj = getObjectFromGUID(guid)
-        if (obj ~= nil) then
-            obj.setName(fields.name)
-            obj.setDescription(fields.description)
-            count = count + 1
-        end
-    end
-    return count
 end
 
 function createImportBackupTab(backup, tabNamePrefix)
@@ -329,7 +583,7 @@ function createButtons()
     self.createButton({
         click_function = 'exportData',
         function_owner = self,
-        label          = 'Export',
+        label          = exportButtonLabel,
         position       = {0.3, 0.5, 0.3},
         rotation       = {0, 180, 0},
         -- scale          = -- Vector,
@@ -338,13 +592,12 @@ function createButtons()
         font_size      = 40,
         color          = defaultButtonColor,
         -- font_color     = -- Color,
-        tooltip        = 'Export information about in-game objects to tab "' ..
-            dataTabName .. '" in JSON-format',
+        tooltip        = exportButtonTooltip,
     })
     self.createButton({
         click_function = 'importData',
         function_owner = self,
-        label          = 'Import',
+        label          = importButtonLabel,
         position       = {0.3, 0.5, 0},
         rotation       = {0, 180, 0},
         -- scale          = -- Vector,
@@ -353,7 +606,20 @@ function createButtons()
         font_size      = 40,
         color          = defaultButtonColor,
         -- font_color     = -- Color,
-        tooltip        = 'Import information about in-game objects from tab "' ..
-            dataTabName .. '" in JSON-format',
+        tooltip        = importButtonTooltip,
+    })
+    self.createButton({
+        click_function = 'asyncStop',
+        function_owner = self,
+        label          = 'Stop',
+        position       = {0, 0.5, 0.3},
+        rotation       = {0, 180, 0},
+        -- scale          = -- Vector,
+        width          = 150,
+        height         = 100,
+        font_size      = 40,
+        color          = defaultButtonColor,
+        -- font_color     = -- Color,
+        tooltip        = 'Stop process of export or import',
     })
 end
