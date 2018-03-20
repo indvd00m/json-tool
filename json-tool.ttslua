@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '2.0.0'
+version = '2.1.0'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -302,6 +302,7 @@ function asyncStop()
 end
 
 function asyncPush(objInfo)
+    print('test asyncPush' .. JSON.encode_pretty(objInfo))
     table.insert(async.stack, objInfo)
     local len = length(async.stack)
     if (len > async.maxStackLength) then
@@ -329,6 +330,7 @@ function asyncPop()
         async.progress = 0
         async.progressCount = ''
     end
+    print('test asyncPop' .. JSON.encode_pretty(next))
     return next
 end
 
@@ -344,16 +346,7 @@ function asyncNext()
     end
     local object = getObjectFromGUID(objectInfo.guid)
     if (object == nil) then
-        -- not loaded yet, need wait and try again
-        asyncPush(objectInfo)
-        local container = getObjectFromGUID(objectInfo.containerGuid)
-        local position = container.positionToWorld(config.takeRelativePosition)
-        container.takeObject({
-            callback       = 'asyncNext',
-            callback_owner = self,
-            guid           = objectInfo.guid,
-            position       = position
-        })
+        takeFromContainer(objectInfo)
         return
     end
     -- object loaded
@@ -364,43 +357,80 @@ function asyncNext()
             async.count = async.count + 1
         end
         async.processed[object.guid] = true
-        -- containers
         if (config.processContainers == true) then
-            local nestedGuids = {}
-            if (object.tag == 'Bag') then
-                local nestedObjectsDescs = object.getObjects()
-                for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
-                    table.insert(nestedGuids, nestedObjectDesc.guid)
-                end
-            elseif (object.tag == 'Deck') then
-                local nestedObjectsDescs = object.getObjects()
-                for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
-                    table.insert(nestedGuids, nestedObjectDesc.guid)
-                end
-            end
-            if (length(nestedGuids) > 0) then
-                -- has nested
-                stackChanged = true
-                asyncPush(objectInfo)
-                for index, nestedGuid in pairs(nestedGuids) do
-                    asyncPush({
-                        guid = nestedGuid,
-                        containerGuid = object.guid
-                    })
-                end
-            end
+            stackChanged = pushNested(object, objectInfo) > 0
         end
     end
     if (stackChanged == false) then
-        -- put back to container if need
-        if (config.processContainers == true) then
-            if (objectInfo.containerGuid ~= nil) then
-                local container = getObjectFromGUID(objectInfo.containerGuid)
-                container.putObject(object)
-            end
-        end
+        putToContainer(object, objectInfo)
     end
     asyncNext()
+end
+
+function takeFromContainer(objectInfo)
+    asyncPush(objectInfo)
+    local container = getObjectFromGUID(objectInfo.containerGuid)
+    local position = container.positionToWorld(config.takeRelativePosition)
+    container.takeObject({
+        callback       = 'asyncNext',
+        callback_owner = self,
+        guid           = objectInfo.guid,
+        position       = position
+    })
+end
+
+function putToContainer(object, objectInfo)
+    if (config.processContainers == true) then
+        if (objectInfo.containerGuid ~= nil) then
+            local container = getObjectFromGUID(objectInfo.containerGuid)
+            container.putObject(object)
+        end
+    end
+end
+
+function pushNested(object, objectInfo)
+    local nestedGuids = {}
+    if (object.tag == 'Bag') then
+        local nestedObjectsDescs = object.getObjects()
+        for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
+            table.insert(nestedGuids, {
+                type = object.tag,
+                guid = nestedObjectDesc.guid
+            })
+        end
+    elseif (object.tag == 'Deck') then
+        local nestedObjectsDescs = object.getObjects()
+        local deckInfo = {
+            length = length(nestedObjectsDescs),
+        }
+        if deckInfo.length == 2 then
+            deckInfo['doubleSize'] = true
+            deckInfo['element1Guid'] = nestedObjectsDescs[1].guid
+            deckInfo['element2Guid'] = nestedObjectsDescs[2].guid
+        end
+        for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
+            table.insert(nestedGuids, {
+                type = object.tag,
+                guid = nestedObjectDesc.guid,
+                deckInfo = deckInfo
+            })
+        end
+    end
+    local pushSize = length(nestedGuids)
+    if (pushSize > 0) then
+        asyncPush(objectInfo)
+        for index, nestedInfo in pairs(nestedGuids) do
+            local nextInfo = {
+                guid = nestedInfo.guid,
+                containerGuid = object.guid
+            }
+            for field, value in pairs(nestedInfo) do
+                nextInfo[field] = value
+            end
+            asyncPush(nextInfo)
+        end
+    end
+    return pushSize
 end
 -- end of async
 
@@ -631,3 +661,4 @@ function createButtons()
         tooltip        = 'Stop process of export or import',
     })
 end
+
