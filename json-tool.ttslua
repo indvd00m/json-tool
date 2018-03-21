@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '2.2.0'
+version = '2.2.1'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -717,7 +717,7 @@ function importData()
 end
 
 function asyncImportStart(parsedData)
-    print('Export started.')
+    print('Import started.')
     data = parsedData
 
     asyncStart(importDataToObject, asyncImportStop)
