@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '2.1.0'
+version = '2.2.0'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -25,6 +25,7 @@ defaultConfig = {
     processContainers = true,
     takeRelativePosition = {2, 0, 2}
 }
+takeErrorTimeoutSeconds = 10
 
 -- variables
 config = {}
@@ -277,7 +278,7 @@ function asyncStart(asyncObjectProcessor, asyncFinishListener)
             containerGuid = nil
         })
     end
-    asyncNext()
+    startLuaCoroutine(self, 'asyncNext')
 end
 
 function asyncStop()
@@ -302,7 +303,6 @@ function asyncStop()
 end
 
 function asyncPush(objInfo)
-    print('test asyncPush' .. JSON.encode_pretty(objInfo))
     table.insert(async.stack, objInfo)
     local len = length(async.stack)
     if (len > async.maxStackLength) then
@@ -330,24 +330,33 @@ function asyncPop()
         async.progress = 0
         async.progressCount = ''
     end
-    print('test asyncPop' .. JSON.encode_pretty(next))
+    return next
+end
+
+function asyncPeek()
+    local len = length(async.stack)
+    local next = nil
+    if (len > 0) then
+        next = table.remove(async.stack)
+        table.insert(async.stack, next)
+    end
     return next
 end
 
 function asyncNext()
     if (async.inProcess == false) then
         asyncStop()
-        return
+        return 1
     end
     local objectInfo = asyncPop()
     if (objectInfo == nil) then
         asyncStop()
-        return
+        return 1
     end
     local object = getObjectFromGUID(objectInfo.guid)
-    if (object == nil) then
+    if (config.processContainers == true and object == nil) then
         takeFromContainer(objectInfo)
-        return
+        return 1
     end
     -- object loaded
     local stackChanged = false
@@ -361,31 +370,153 @@ function asyncNext()
             stackChanged = pushNested(object, objectInfo) > 0
         end
     end
-    if (stackChanged == false) then
+    if (
+        config.processContainers == true
+        and stackChanged == false
+        and objectInfo.containerGuid ~= nil
+    ) then
         putToContainer(object, objectInfo)
+    else
+        startLuaCoroutine(self, 'asyncNext')
     end
-    asyncNext()
+    return 1
 end
 
 function takeFromContainer(objectInfo)
+    if (objectInfo.containerGuid == nil) then
+        print('Trying to take object ' .. objectInfo.guid .. ' from unexisted container')
+        startLuaCoroutine(self, 'asyncNext')
+        return
+    end
     asyncPush(objectInfo)
     local container = getObjectFromGUID(objectInfo.containerGuid)
     local position = container.positionToWorld(config.takeRelativePosition)
     container.takeObject({
-        callback       = 'asyncNext',
+        callback       = 'takedFromContainer',
         callback_owner = self,
         guid           = objectInfo.guid,
-        position       = position
+        position       = position,
+        take_from_top  = true
     })
+    wait(takeErrorTimeoutSeconds, function(takedGuid)
+        if (async.inProcess == false) then
+            return
+        end
+        local headInfo = asyncPeek()
+        if (headInfo ~= nil and headInfo.guid == takedGuid) then
+            if (async.processed[takedGuid] == nil) then
+                print('Detected unworked take of object ' .. takedGuid .. ', trying to take again')
+                startLuaCoroutine(self, 'asyncNext')
+            end
+        end
+    end, objectInfo.guid)
+end
+
+function takedFromContainer(object)
+    startLuaCoroutine(self, 'asyncNext')
 end
 
 function putToContainer(object, objectInfo)
-    if (config.processContainers == true) then
-        if (objectInfo.containerGuid ~= nil) then
-            local container = getObjectFromGUID(objectInfo.containerGuid)
-            container.putObject(object)
+    if (objectInfo.type == 'Deck') then
+        putToDeck(object, objectInfo)
+    else
+        local container = getObjectFromGUID(objectInfo.containerGuid)
+        container.putObject(object)
+        startLuaCoroutine(self, 'asyncNext')
+    end
+end
+
+function putToDeck(object, objectInfo)
+    local deckInfo = objectInfo.deckInfo
+    if (deckInfo.doubleSize == true) then
+        putToDoubleSizeDeck(object, objectInfo)
+    else
+        local container = getObjectFromGUID(objectInfo.containerGuid)
+        container.putObject(object)
+        startLuaCoroutine(self, 'asyncNext')
+    end
+end
+
+function putToDoubleSizeDeck(object, objectInfo)
+    local deckInfo = objectInfo.deckInfo
+    if (object.guid == deckInfo.element1Guid) then
+        -- second time taked object
+        object = getObjectFromGUID(deckInfo.element2Guid)
+        objectInfo.containerGuid = deckInfo.element1Guid
+        local container = getObjectFromGUID(objectInfo.containerGuid)
+        container.putObject(object)
+        waitObjectReplaced(container, 5, function(newObject)
+            local containerInfo = asyncPeek()
+            if (newObject ~= nil) then
+                containerInfo.guid = newObject.guid
+                containerInfo.deckInfo.deckGuid = newObject.guid
+                async.processed[newObject.guid] = true
+            else
+                print('Waiting of replacing of object ' .. containerInfo.guid .. ' is failed.')
+            end
+            startLuaCoroutine(self, 'asyncNext')
+        end)
+    elseif (object.guid == deckInfo.element2Guid) then
+        -- first time taked object
+        startLuaCoroutine(self, 'asyncNext')
+    end
+end
+
+function waitObjectReplaced(object, timeout, callback)
+    local guid = object.guid
+    local position = vectorToTable(object.getPosition())
+    local rotation = vectorToTable(object.getRotation())
+    waitCondition(
+        conditionOr(
+            conditionObjectReplaced(guid, position, rotation),
+            conditionTime(timeout)
+        ), function(guid, position, rotation, callback)
+            local newObject = findObject(position, rotation)
+            if (newObject != nil and newObject.guid == object.guid) then
+                newObject = nil
+            end
+            callback(newObject)
+        end, guid, position, rotation, callback
+    )
+end
+
+function conditionObjectReplaced(guid, position, rotation)
+    function conditionObjectReplacedInstance()
+        local obj = findObject(position, rotation)
+        local objReplaced = obj ~= nil and obj.guid ~= guid
+        return objReplaced
+    end
+    return conditionObjectReplacedInstance
+end
+
+function findObject(position, rotation)
+    local allObjects = getAllObjects()
+    for index, object in pairs(allObjects) do
+        local objPosition = object.getPosition()
+        local objRotation = object.getRotation()
+        if (
+            equalsVectors(position, objPosition)
+            -- and equalsVectors(rotation, objRotation)
+        ) then
+            return object
         end
     end
+    return nil
+end
+
+function vectorToTable(v)
+    return {
+        x = v.x,
+        y = v.y,
+        z = v.z
+    }
+end
+
+function equalsVectors(v1, v2)
+    if (v1.x == v2.x and v1.y == v2.y and v1.z == v2.z) then
+        return true
+    end
+    return false
 end
 
 function pushNested(object, objectInfo)
@@ -401,6 +532,7 @@ function pushNested(object, objectInfo)
     elseif (object.tag == 'Deck') then
         local nestedObjectsDescs = object.getObjects()
         local deckInfo = {
+            deckGuid = object.guid,
             length = length(nestedObjectsDescs),
         }
         if deckInfo.length == 2 then
@@ -415,6 +547,7 @@ function pushNested(object, objectInfo)
                 deckInfo = deckInfo
             })
         end
+        objectInfo['deckInfo'] = deckInfo
     end
     local pushSize = length(nestedGuids)
     if (pushSize > 0) then
@@ -433,6 +566,61 @@ function pushNested(object, objectInfo)
     return pushSize
 end
 -- end of async
+
+-- start of wait
+function waitCondition(condition, callback, ...)
+    local params = {...}
+    function waitConditionCoroutine()
+        repeat
+            coroutine.yield(0)
+        until (condition(unpack(params)) == true)
+        callback(unpack(params))
+        return 1
+    end
+    startLuaCoroutine(self, 'waitConditionCoroutine')
+end
+
+function conditionOr(...)
+    local conditions = {...}
+    function conditionOrInstance()
+        for index, condition in pairs(conditions) do
+            if (condition()) then
+                return true
+            end
+        end
+        return false
+    end
+    return conditionOrInstance
+end
+
+function conditionTime(seconds)
+    local awaitSeconds = os.clock() + seconds
+    function conditionTimeInstance()
+        return os.clock() >= awaitSeconds
+    end
+    return conditionTimeInstance
+end
+
+function wait(seconds, callback, ...)
+    local params = {...}
+    waitCondition(conditionTime(seconds), function(params)
+        callback(unpack(params))
+    end, params)
+end
+
+function wait2(seconds, callback, ...)
+    local params = {...}
+    function wait2Coroutine()
+        local awaitSeconds = os.clock() + seconds
+        repeat
+            coroutine.yield(0)
+        until (os.clock() >= awaitSeconds)
+        callback(unpack(params))
+        return 1
+    end
+    startLuaCoroutine(self, 'wait2Coroutine')
+end
+-- end of wait
 
 function exportObjectToDataIfNeed(object)
     if
