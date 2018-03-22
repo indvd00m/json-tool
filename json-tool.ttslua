@@ -662,6 +662,9 @@ function importDataToObject(object)
     if (fields == nil) then
         return false
     end
+    if (fields.guid ~= object.getGUID()) then
+        print('WARN: object key ' .. object.getGUID() .. ' and object guid ' .. fields.guid .. ' not equals')
+    end
     object.setName(fields.name)
     object.setDescription(fields.description)
     return true
