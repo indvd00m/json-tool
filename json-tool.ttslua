@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '2.4.0'
+version = '2.4.1'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -22,7 +22,7 @@ defaultConfig = {
     exportEmptyData = false,
     createExportBackups = true,
     createImportBackups = true,
-    processContainers = true,
+    processContainers = false,
     processDuplicates = false,
     takeRelativePosition = {2, 0, 2},
     includeGuids = {},
