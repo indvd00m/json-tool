@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '2.2.1'
+version = '2.3.0'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -23,7 +23,10 @@ defaultConfig = {
     createExportBackups = true,
     createImportBackups = true,
     processContainers = true,
-    takeRelativePosition = {2, 0, 2}
+    processDuplicates = false,
+    takeRelativePosition = {2, 0, 2},
+    includeGuids = {},
+    excludeGuids = {},
 }
 takeErrorTimeoutSeconds = 10
 
@@ -34,6 +37,7 @@ async = {
     inProcess = false,
     processedGuids = nil,
     stack = nil,
+    stackContentByGuid = nil,
     maxStackLength = 0,
     progress = 0,
     progressCount = nil,
@@ -264,6 +268,7 @@ function asyncStart(asyncObjectProcessor, asyncFinishListener)
     async.inProcess = true
     async.processed = {}
     async.stack = {}
+    async.stackContentByGuid = {}
     async.maxStackLength = 0
     async.progress = 0
     async.progressCount = ''
@@ -288,6 +293,7 @@ function asyncStop()
     async.inProcess = false
     async.processed = nil
     async.stack = nil
+    async.stackContentByGuid = nil
     async.maxStackLength = 0
     async.progress = 0
     async.progressCount = nil
@@ -303,7 +309,14 @@ function asyncStop()
 end
 
 function asyncPush(objInfo)
+    if (async.stackContentByGuid[objInfo.guid] ~= nil) then
+        print('Detected duplicated object in processing queue: ' .. objInfo.guid)
+        if (config.processDuplicates == false) then
+            return
+        end
+    end
     table.insert(async.stack, objInfo)
+    async.stackContentByGuid[objInfo.guid] = objInfo
     local len = length(async.stack)
     if (len > async.maxStackLength) then
         async.maxStackLength = len
@@ -322,6 +335,7 @@ function asyncPop()
     local next = nil
     if (len > 0) then
         next = table.remove(async.stack)
+        async.stackContentByGuid[next.guid] = nil
     end
     if (async.maxStackLength > 0) then
         async.progress = 1 - len / async.maxStackLength
@@ -348,11 +362,14 @@ function asyncNext()
         asyncStop()
         return 1
     end
-    local objectInfo = asyncPop()
-    if (objectInfo == nil) then
-        asyncStop()
-        return 1
-    end
+    local objectInfo = nil
+    repeat
+        objectInfo = asyncPop()
+        if (objectInfo == nil) then
+            asyncStop()
+            return 1
+        end
+    until (isNeedProcessByGuid(objectInfo.guid) == true)
     local object = getObjectFromGUID(objectInfo.guid)
     if (config.processContainers == true and object == nil) then
         takeFromContainer(objectInfo)
@@ -519,18 +536,33 @@ function equalsVectors(v1, v2)
     return false
 end
 
+function getContainerObjects(container)
+    local realNested = {}
+    local ttsNested = container.getObjects()
+    for index, objDesc in pairs(ttsNested) do
+        if (getObjectFromGUID(objDesc.guid) != nil) then
+            print('Detected getObjects() API error: ' .. objDesc.guid .. ' is not contained in ' .. container.getGUID())
+        else
+            table.insert(realNested, objDesc)
+        end
+    end
+    return realNested
+end
+
 function pushNested(object, objectInfo)
     local nestedGuids = {}
     if (object.tag == 'Bag') then
-        local nestedObjectsDescs = object.getObjects()
+        local nestedObjectsDescs = getContainerObjects(object)
         for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
-            table.insert(nestedGuids, {
-                type = object.tag,
-                guid = nestedObjectDesc.guid
-            })
+            if (isNeedProcessByGuid(nestedObjectDesc.guid)) then
+                table.insert(nestedGuids, {
+                    type = object.tag,
+                    guid = nestedObjectDesc.guid
+                })
+            end
         end
     elseif (object.tag == 'Deck') then
-        local nestedObjectsDescs = object.getObjects()
+        local nestedObjectsDescs = getContainerObjects(object)
         local deckInfo = {
             deckGuid = object.guid,
             length = length(nestedObjectsDescs),
@@ -541,11 +573,13 @@ function pushNested(object, objectInfo)
             deckInfo['element2Guid'] = nestedObjectsDescs[2].guid
         end
         for index, nestedObjectDesc in pairs(nestedObjectsDescs) do
-            table.insert(nestedGuids, {
-                type = object.tag,
-                guid = nestedObjectDesc.guid,
-                deckInfo = deckInfo
-            })
+            if (isNeedProcessByGuid(nestedObjectDesc.guid)) then
+                table.insert(nestedGuids, {
+                    type = object.tag,
+                    guid = nestedObjectDesc.guid,
+                    deckInfo = deckInfo
+                })
+            end
         end
         objectInfo['deckInfo'] = deckInfo
     end
@@ -607,19 +641,6 @@ function wait(seconds, callback, ...)
         callback(unpack(params))
     end, params)
 end
-
-function wait2(seconds, callback, ...)
-    local params = {...}
-    function wait2Coroutine()
-        local awaitSeconds = os.clock() + seconds
-        repeat
-            coroutine.yield(0)
-        until (os.clock() >= awaitSeconds)
-        callback(unpack(params))
-        return 1
-    end
-    startLuaCoroutine(self, 'wait2Coroutine')
-end
 -- end of wait
 
 function exportObjectToDataIfNeed(object)
@@ -628,6 +649,17 @@ function exportObjectToDataIfNeed(object)
         and isNeedExportByObject(object, data)
     then
         exportObjectToData(object)
+        return true
+    end
+    return false
+end
+
+function importDataToObjectIfNeed(object)
+    if
+        isNeedImportByGuid(object.guid, data)
+        and isNeedImportByObject(object, data)
+    then
+        importDataToObject(object)
         return true
     end
     return false
@@ -671,6 +703,19 @@ function importDataToObject(object)
 end
 -- end of exchange data block
 
+function isNeedProcessByGuid(guid)
+    if (config.excludeGuids[guid] == true) then
+        return false
+    end
+    if (length(config.includeGuids) > 0) then
+        if (config.includeGuids[guid] == true) then
+            return true
+        end
+        return false
+    end
+    return true
+end
+
 function isNeedExportByGuid(guid, data)
     -- self
     if (guid == self.guid) then
@@ -680,7 +725,7 @@ function isNeedExportByGuid(guid, data)
     if (data[guid] ~= nil) then
         return false
     end
-    return true
+    return isNeedProcessByGuid(guid)
 end
 
 function isNeedExportByObject(object, data)
@@ -694,6 +739,21 @@ function isNeedExportByObject(object, data)
     then
         return false
     end
+    return true
+end
+
+function isNeedImportByGuid(guid, data)
+    -- self
+    if (guid == self.guid) then
+        return false
+    end
+    if (data[guid] == nil) then
+        return false
+    end
+    return isNeedProcessByGuid(guid)
+end
+
+function isNeedImportByObject(object, data)
     return true
 end
 
@@ -723,7 +783,7 @@ function asyncImportStart(parsedData)
     print('Import started.')
     data = parsedData
 
-    asyncStart(importDataToObject, asyncImportStop)
+    asyncStart(importDataToObjectIfNeed, asyncImportStop)
 end
 
 function asyncImportStop(count)
@@ -852,4 +912,3 @@ function createButtons()
         tooltip        = 'Stop process of export or import',
     })
 end
-
