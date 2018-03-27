@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '2.3.0'
+version = '2.4.0'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -33,6 +33,7 @@ takeErrorTimeoutSeconds = 10
 -- variables
 config = {}
 data = nil
+importBackup = nil
 async = {
     inProcess = false,
     processedGuids = nil,
@@ -690,13 +691,21 @@ function importDataToObject(object)
         tooltip        = async.progressCount
     })
 
-    local fields = data[object.getGUID()]
+    local guid = object.getGUID()
+    local fields = data[guid]
     if (fields == nil) then
         return false
     end
-    if (fields.guid ~= object.getGUID()) then
-        print('WARN: object key ' .. object.getGUID() .. ' and object guid ' .. fields.guid .. ' not equals')
+    if (fields.guid ~= guid) then
+        print('WARN: object key ' .. guid .. ' and object guid ' .. fields.guid .. ' not equals')
     end
+    -- backup import
+    importBackup[guid] = {
+        guid = guid,
+        name = object.getName(),
+        description = object.getDescription()
+    }
+    -- write data
     object.setName(fields.name)
     object.setDescription(fields.description)
     return true
@@ -767,14 +776,6 @@ function importData()
     syncTabs()
     local dataTab = getTabByName(dataTabName)
     local parsedData = readDataFromTab(dataTab)
-    local backup = createBackupForData(parsedData)
-
-    if (config.createImportBackups == true) then
-        local tabName = createImportBackupTab(backup, importBackupTabNamePrefix)
-        print('Data backuped to tab "' .. tabName .. '".')
-    else
-        print('Backup is disabled.')
-    end
 
     asyncImportStart(parsedData)
 end
@@ -782,11 +783,19 @@ end
 function asyncImportStart(parsedData)
     print('Import started.')
     data = parsedData
+    importBackup = {}
 
     asyncStart(importDataToObjectIfNeed, asyncImportStop)
 end
 
 function asyncImportStop(count)
+    if (config.createImportBackups == true) then
+        local tabName = createImportBackupTab(importBackup, importBackupTabNamePrefix)
+        print('Data backuped to tab "' .. tabName .. '".')
+    else
+        print('Backup is disabled.')
+    end
+
     print(count .. ' in-game objects imported.')
 
     self.editButton({
@@ -796,22 +805,8 @@ function asyncImportStop(count)
     })
 
     data = nil
+    importBackup = nil
     print('Import done.')
-end
-
-function createBackupForData(data)
-    local backup = {}
-    for guid, fields in pairs(data) do
-        local obj = getObjectFromGUID(guid)
-        if (obj ~= nil) then
-            backup[guid] = {
-                guid = obj.getGUID(),
-                name = obj.getName(),
-                description = obj.getDescription()
-            }
-        end
-    end
-    return backup
 end
 
 function createImportBackupTab(backup, tabNamePrefix)
