@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '3.0.0'
+version = '3.0.1'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -390,7 +390,7 @@ function findNextObjectForImport()
                 nextObjectForManualImport = dataObject
             else
                 -- find minimal object by field 'name'
-                if (dataObject.name < nextObjectForManualImport.name) then
+                if (compareObjects(dataObject, nextObjectForManualImport) < 0) then
                     nextObjectForManualImport = dataObject
                 end
             end
@@ -401,6 +401,27 @@ function findNextObjectForImport()
     else
         print('All data already manually processed, you can stop importing')
     end
+end
+
+function compareObjects(object1, object2)
+    local fields = {'name', 'description', 'guid'}
+    for index, fieldName in pairs(fields) do
+        if (object1[fieldName] == nil and object2[fieldName] ~= nil) then
+            return -1
+        end
+        if (object1[fieldName] ~= nil and object2[fieldName] == nil) then
+            return 1
+        end
+        if (object1[fieldName] ~= nil and object2[fieldName] ~= nil) then
+            if (object1[fieldName] < object2[fieldName]) then
+                return -1
+            end
+            if (object1[fieldName] > object2[fieldName]) then
+                return 1
+            end
+        end
+    end
+    return 0
 end
 -- end of exchange data block
 
