@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '2.4.1'
+version = '3.0.0'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -25,27 +25,20 @@ defaultConfig = {
     processContainers = false,
     processDuplicates = false,
     takeRelativePosition = {2, 0, 2},
+    takeErrorTimeoutSeconds = 10,
     includeGuids = {},
     excludeGuids = {},
+    mode = {
+        auto = true,
+        manual = false
+    }
 }
-takeErrorTimeoutSeconds = 10
 
 -- variables
 config = {}
 data = nil
 importBackup = nil
-async = {
-    inProcess = false,
-    processedGuids = nil,
-    stack = nil,
-    stackContentByGuid = nil,
-    maxStackLength = 0,
-    progress = 0,
-    progressCount = nil,
-    objectProcessor = nil,
-    finishListener = nil,
-    count = 0
-}
+nextObjectForManualImport = nil
 
 -- code
 function onSave()
@@ -229,7 +222,7 @@ function asyncExportStart()
     print('Export started.')
     data = {}
 
-    asyncStart(exportObjectToDataIfNeed, asyncExportStop)
+    asyncStart(exportObjectToDataIfNeed, exportObjectToDataManual, asyncExportStop)
 end
 
 function asyncExportStop(count)
@@ -259,8 +252,338 @@ function createTabBackup(tab, tabNamePrefix)
     return tabName
 end
 
--- start of async
-function asyncStart(asyncObjectProcessor, asyncFinishListener)
+function exportObjectToDataIfNeed(object)
+    if
+        isNeedExportByGuid(object.guid, data)
+        and isNeedExportByObject(object, data)
+    then
+        return exportObjectToData(object)
+    end
+    return false
+end
+
+function importDataToObjectIfNeed(object)
+    if
+        isNeedImportByGuid(object.guid, data)
+        and isNeedImportByObject(object, data)
+    then
+        return importDataToObject(object)
+    end
+    return false
+end
+
+-- start of exchange data block
+function exportObjectToData(object)
+    local percent = string.format('%.1f %%', async.progress * 100)
+    self.editButton({
+        index          = 0,
+        label          = percent,
+        tooltip        = async.progressCount
+    })
+
+    local guid = object.getGUID()
+    data[guid] = {
+        guid = guid,
+        name = object.getName(),
+        description = object.getDescription()
+    }
+    return true
+end
+
+function exportObjectToDataManual(object)
+    if (object == nil) then
+        return false
+    end
+    if (self.guid == object.guid) then
+        print('Skipping export of this object. Pick up next object or press Stop button...')
+        return false
+    end
+    local result = data[object.guid] == nil
+    exportObjectToData(object)
+    print('Exported: ' .. object.guid .. ' "' .. object.getName() .. '". Pick up next object or press Stop button...')
+    return result
+end
+
+function importDataToObject(object)
+    local percent = string.format('%.1f %%', async.progress * 100)
+    self.editButton({
+        index          = 1,
+        label          = percent,
+        tooltip        = async.progressCount
+    })
+
+    local guid = object.getGUID()
+    local fields = data[guid]
+    if (fields == nil) then
+        return false
+    end
+    if (fields.guid ~= guid) then
+        print('WARN: object guid ' .. guid .. ' and data guid ' .. fields.guid .. ' not equals')
+    end
+    -- backup import
+    importBackup[guid] = {
+        guid = guid,
+        name = object.getName(),
+        description = object.getDescription()
+    }
+    -- write data
+    object.setName(fields.name)
+    object.setDescription(fields.description)
+    return true
+end
+
+function importDataToObjectManual(object)
+    local result = false
+    -- importing
+    if (nextObjectForManualImport ~= nil and object ~= nil) then
+        local percent = string.format('%.1f %%', async.progress * 100)
+        self.editButton({
+            index          = 1,
+            label          = percent,
+            tooltip        = async.progressCount
+        })
+
+        if (self.guid == object.guid) then
+            -- mark as skipped
+            if (importBackup[nextObjectForManualImport.guid] == nil) then
+                importBackup[nextObjectForManualImport.guid] = {
+                    guid = '[SKIPPED]',
+                    name = '[SKIPPED]',
+                    description = '[SKIPPED]'
+                }
+            end
+
+            print('Skipping import of this data')
+            result = false
+        else
+            -- backup import
+            if (importBackup[nextObjectForManualImport.guid] == nil) then
+                importBackup[nextObjectForManualImport.guid] = {
+                    guid = object.guid,
+                    name = object.getName(),
+                    description = object.getDescription()
+                }
+            end
+
+            if (nextObjectForManualImport.guid ~= object.guid) then
+                print('WARN: object guid ' .. object.guid .. ' and data guid ' .. nextObjectForManualImport.guid .. ' not equals')
+            end
+
+            -- write data
+            object.setName(nextObjectForManualImport.name)
+            object.setDescription(nextObjectForManualImport.description)
+
+            print('Imported to: ' .. object.guid)
+            result = true
+        end
+    end
+
+    findNextObjectForImport()
+    return result
+end
+
+function findNextObjectForImport()
+    nextObjectForManualImport = nil
+    for index, dataObject in pairs(data) do
+        if (importBackup[dataObject.guid] == nil) then
+            if (nextObjectForManualImport == nil) then
+                nextObjectForManualImport = dataObject
+            else
+                -- find minimal object by field 'name'
+                if (dataObject.name < nextObjectForManualImport.name) then
+                    nextObjectForManualImport = dataObject
+                end
+            end
+        end
+    end
+    if (nextObjectForManualImport != nil) then
+        print('Pick up object for importing this data or press Stop button:\n' .. JSON.encode_pretty(nextObjectForManualImport))
+    else
+        print('All data already manually processed, you can stop importing')
+    end
+end
+-- end of exchange data block
+
+function isNeedProcessByGuid(guid)
+    if (config.excludeGuids[guid] == true) then
+        return false
+    end
+    if (length(config.includeGuids) > 0) then
+        if (config.includeGuids[guid] == true) then
+            return true
+        end
+        return false
+    end
+    return true
+end
+
+function isNeedExportByGuid(guid, data)
+    -- self
+    if (guid == self.guid) then
+        return false
+    end
+    -- already processed
+    if (data[guid] ~= nil) then
+        return false
+    end
+    return isNeedProcessByGuid(guid)
+end
+
+function isNeedExportByObject(object, data)
+    -- empty values
+    local name = object.getName()
+    local description = object.getDescription()
+    if
+        config.exportEmptyData == false
+        and isEmpty(name) == true
+        and isEmpty(description) == true
+    then
+        return false
+    end
+    return true
+end
+
+function isNeedImportByGuid(guid, data)
+    -- self
+    if (guid == self.guid) then
+        return false
+    end
+    if (data[guid] == nil) then
+        return false
+    end
+    return isNeedProcessByGuid(guid)
+end
+
+function isNeedImportByObject(object, data)
+    return true
+end
+
+function importData()
+    if (async.inProcess == true) then
+        print('WARN: async task already started')
+        return
+    end
+    print('Start importing...')
+
+    syncTabs()
+    local dataTab = getTabByName(dataTabName)
+    local parsedData = readDataFromTab(dataTab)
+
+    asyncImportStart(parsedData)
+end
+
+function asyncImportStart(parsedData)
+    print('Import started.')
+    data = parsedData
+    importBackup = {}
+    nextObjectForManualImport = nil
+
+    asyncStart(importDataToObjectIfNeed, importDataToObjectManual, asyncImportStop)
+end
+
+function asyncImportStop(count)
+    if (config.createImportBackups == true) then
+        local tabName = createImportBackupTab(importBackup, importBackupTabNamePrefix)
+        print('Data backuped to tab "' .. tabName .. '".')
+    else
+        print('Backup is disabled.')
+    end
+
+    print(count .. ' in-game objects imported.')
+
+    self.editButton({
+        index          = 1,
+        label          = importButtonLabel,
+        tooltip        = importButtonTooltip
+    })
+
+    data = nil
+    importBackup = nil
+    nextObjectForManualImport = nil
+    print('Import done.')
+end
+
+function createImportBackupTab(backup, tabNamePrefix)
+    local tabName = tabNamePrefix .. '_' .. os.date('%Y-%m-%d_%H:%M:%S')
+    local content = JSON.encode_pretty(backup)
+    addNotebookTab({
+        title = tabName,
+        body  = content,
+        color = tabsColor
+    })
+    return tabName
+end
+
+function objectsComparator(o1, o2)
+    return o1.guid < o2.guid
+end
+
+function objectsFieldsComparator(o1, o2)
+    return o1.guid < o2.guid
+end
+
+function isEmpty(str)
+    if str == nil then
+        return true
+    end
+    if string.len(str) == 0 then
+        return true
+    end
+    return false
+end
+
+function length(table)
+    local count = 0
+    for _ in pairs(table) do
+        count = count + 1
+    end
+    return count
+end
+
+function clone (t) -- deep-copy a table
+    if type(t) ~= "table" then
+        return t
+    end
+    local meta = getmetatable(t)
+    local target = {}
+    for k, v in pairs(t) do
+        if type(v) == "table" then
+            target[k] = clone(v)
+        else
+            target[k] = v
+        end
+    end
+    setmetatable(target, meta)
+    return target
+end
+
+-- START OF ASYNC CODE
+async = {
+    inProcess = false,
+    mode = nil,
+    processedGuids = nil,
+    stack = nil,
+    stackContentByGuid = nil,
+    maxStackLength = 0,
+    progress = 0,
+    progressCount = nil,
+    objectProcessorAuto = nil,
+    objectProcessorManual = nil,
+    finishListener = nil,
+    count = 0
+}
+
+function onObjectPickedUp(playerColor, object)
+    if (async.inProcess == true and async.mode == 'manual') then
+        asyncPush({
+            guid = object.guid,
+            containerGuid = nil
+        })
+        startLuaCoroutine(self, 'asyncNextManual')
+    end
+end
+
+function asyncStart(objectProcessorAuto, objectProcessorManual, asyncFinishListener)
     if (async.inProcess == true) then
         print('WARN: async task already started')
         return
@@ -273,32 +596,59 @@ function asyncStart(asyncObjectProcessor, asyncFinishListener)
     async.maxStackLength = 0
     async.progress = 0
     async.progressCount = ''
-    async.objectProcessor = asyncObjectProcessor
+    async.objectProcessorAuto = objectProcessorAuto
+    async.objectProcessorManual = objectProcessorManual
     async.finishListener = asyncFinishListener
     async.count = 0
 
-    local allObjects = getAllObjects()
-    for index, object in pairs(allObjects) do
-        asyncPush({
-            guid = object.guid,
-            containerGuid = nil
-        })
+    if (config.mode.auto == true) then
+        async.mode = 'auto'
+        print('Auto processing started...')
+        local allObjects = getAllObjects()
+        for index, object in pairs(allObjects) do
+            asyncPush({
+                guid = object.guid,
+                containerGuid = nil
+            })
+        end
+        startLuaCoroutine(self, 'asyncNextAuto')
+    elseif (config.mode.manual == true) then
+        async.mode = 'manual'
+        print('Manual processing started: pick up object for continue or press Stop button...')
+        -- first time call processor with nil argument
+        async.objectProcessorManual(nil)
+    else
+        asyncStop()
     end
-    startLuaCoroutine(self, 'asyncNext')
 end
 
 function asyncStop()
+    if (async.mode == 'auto') then
+        print('Auto processing done.')
+        if (config.mode.manual == true) then
+            async.mode = 'manual'
+            print('Manual processing started: pick up object for continue or press Stop button...')
+            -- first time call processor with nil argument
+            async.objectProcessorManual(nil)
+            return
+        end
+    elseif (async.mode == 'manual') then
+        print('Manual processing done.')
+    end
+
     local asyncFinishListener = async.finishListener
     local count = async.count
 
     async.inProcess = false
+    async.mode = nil
     async.processed = nil
     async.stack = nil
     async.stackContentByGuid = nil
     async.maxStackLength = 0
     async.progress = 0
     async.progressCount = nil
-    async.objectProcessor = nil
+    async.objectProcessorAuto = nil
+    async.objectProcessorManual = nil
     async.finishListener = nil
     async.count = 0
 
@@ -358,9 +708,36 @@ function asyncPeek()
     return next
 end
 
-function asyncNext()
+function asyncNextManual()
     if (async.inProcess == false) then
         asyncStop()
+        return 1
+    end
+    if (async.mode ~= 'manual') then
+        return 1
+    end
+    local objectInfo = asyncPop()
+    if (objectInfo == nil) then
+        return 1
+    end
+
+    local object = getObjectFromGUID(objectInfo.guid)
+    if (object == nil) then
+        return 1
+    end
+    if async.objectProcessorManual(object) then
+        async.count = async.count + 1
+    end
+    async.processed[object.guid] = true
+    return 1
+end
+
+function asyncNextAuto()
+    if (async.inProcess == false) then
+        asyncStop()
+        return 1
+    end
+    if (async.mode ~= 'auto') then
         return 1
     end
     local objectInfo = nil
@@ -380,7 +757,7 @@ function asyncNext()
     local stackChanged = false
     if (async.processed[object.guid] == nil) then
         -- not processed
-        if async.objectProcessor(object) then
+        if async.objectProcessorAuto(object) then
             async.count = async.count + 1
         end
         async.processed[object.guid] = true
@@ -395,7 +772,7 @@ function asyncNext()
     ) then
         putToContainer(object, objectInfo)
     else
-        startLuaCoroutine(self, 'asyncNext')
+        startLuaCoroutine(self, 'asyncNextAuto')
     end
     return 1
 end
@@ -403,7 +780,7 @@ end
 function takeFromContainer(objectInfo)
     if (objectInfo.containerGuid == nil) then
         print('Trying to take object ' .. objectInfo.guid .. ' from unexisted container')
-        startLuaCoroutine(self, 'asyncNext')
+        startLuaCoroutine(self, 'asyncNextAuto')
         return
     end
     asyncPush(objectInfo)
@@ -416,7 +793,7 @@ function takeFromContainer(objectInfo)
         position       = position,
         take_from_top  = true
     })
-    wait(takeErrorTimeoutSeconds, function(takedGuid)
+    wait(config.takeErrorTimeoutSeconds, function(takedGuid)
         if (async.inProcess == false) then
             return
         end
@@ -424,14 +801,14 @@ function takeFromContainer(objectInfo)
         if (headInfo ~= nil and headInfo.guid == takedGuid) then
             if (async.processed[takedGuid] == nil) then
                 print('Detected unworked take of object ' .. takedGuid .. ', trying to take again')
-                startLuaCoroutine(self, 'asyncNext')
+                startLuaCoroutine(self, 'asyncNextAuto')
             end
         end
     end, objectInfo.guid)
 end
 
 function takedFromContainer(object)
-    startLuaCoroutine(self, 'asyncNext')
+    startLuaCoroutine(self, 'asyncNextAuto')
 end
 
 function putToContainer(object, objectInfo)
@@ -440,7 +817,7 @@ function putToContainer(object, objectInfo)
     else
         local container = getObjectFromGUID(objectInfo.containerGuid)
         container.putObject(object)
-        startLuaCoroutine(self, 'asyncNext')
+        startLuaCoroutine(self, 'asyncNextAuto')
     end
 end
 
@@ -451,7 +828,7 @@ function putToDeck(object, objectInfo)
     else
         local container = getObjectFromGUID(objectInfo.containerGuid)
         container.putObject(object)
-        startLuaCoroutine(self, 'asyncNext')
+        startLuaCoroutine(self, 'asyncNextAuto')
     end
 end
 
@@ -472,11 +849,11 @@ function putToDoubleSizeDeck(object, objectInfo)
             else
                 print('Waiting of replacing of object ' .. containerInfo.guid .. ' is failed.')
             end
-            startLuaCoroutine(self, 'asyncNext')
+            startLuaCoroutine(self, 'asyncNextAuto')
         end)
     elseif (object.guid == deckInfo.element2Guid) then
         -- first time taked object
-        startLuaCoroutine(self, 'asyncNext')
+        startLuaCoroutine(self, 'asyncNextAuto')
     end
 end
 
@@ -600,9 +977,9 @@ function pushNested(object, objectInfo)
     end
     return pushSize
 end
--- end of async
+-- END OF ASYNC CODE
 
--- start of wait
+-- START OF WAIT CODE
 function waitCondition(condition, callback, ...)
     local params = {...}
     function waitConditionCoroutine()
@@ -642,227 +1019,9 @@ function wait(seconds, callback, ...)
         callback(unpack(params))
     end, params)
 end
--- end of wait
+-- END OF WAIT CODE
 
-function exportObjectToDataIfNeed(object)
-    if
-        isNeedExportByGuid(object.guid, data)
-        and isNeedExportByObject(object, data)
-    then
-        exportObjectToData(object)
-        return true
-    end
-    return false
-end
-
-function importDataToObjectIfNeed(object)
-    if
-        isNeedImportByGuid(object.guid, data)
-        and isNeedImportByObject(object, data)
-    then
-        importDataToObject(object)
-        return true
-    end
-    return false
-end
-
--- start of exchange data block
-function exportObjectToData(object)
-    local percent = string.format('%.1f %%', async.progress * 100)
-    self.editButton({
-        index          = 0,
-        label          = percent,
-        tooltip        = async.progressCount
-    })
-
-    local guid = object.getGUID()
-    data[guid] = {
-        guid = guid,
-        name = object.getName(),
-        description = object.getDescription()
-    }
-end
-
-function importDataToObject(object)
-    local percent = string.format('%.1f %%', async.progress * 100)
-    self.editButton({
-        index          = 1,
-        label          = percent,
-        tooltip        = async.progressCount
-    })
-
-    local guid = object.getGUID()
-    local fields = data[guid]
-    if (fields == nil) then
-        return false
-    end
-    if (fields.guid ~= guid) then
-        print('WARN: object key ' .. guid .. ' and object guid ' .. fields.guid .. ' not equals')
-    end
-    -- backup import
-    importBackup[guid] = {
-        guid = guid,
-        name = object.getName(),
-        description = object.getDescription()
-    }
-    -- write data
-    object.setName(fields.name)
-    object.setDescription(fields.description)
-    return true
-end
--- end of exchange data block
-
-function isNeedProcessByGuid(guid)
-    if (config.excludeGuids[guid] == true) then
-        return false
-    end
-    if (length(config.includeGuids) > 0) then
-        if (config.includeGuids[guid] == true) then
-            return true
-        end
-        return false
-    end
-    return true
-end
-
-function isNeedExportByGuid(guid, data)
-    -- self
-    if (guid == self.guid) then
-        return false
-    end
-    -- already processed
-    if (data[guid] ~= nil) then
-        return false
-    end
-    return isNeedProcessByGuid(guid)
-end
-
-function isNeedExportByObject(object, data)
-    -- empty values
-    local name = object.getName()
-    local description = object.getDescription()
-    if
-        config.exportEmptyData == false
-        and isEmpty(name) == true
-        and isEmpty(description) == true
-    then
-        return false
-    end
-    return true
-end
-
-function isNeedImportByGuid(guid, data)
-    -- self
-    if (guid == self.guid) then
-        return false
-    end
-    if (data[guid] == nil) then
-        return false
-    end
-    return isNeedProcessByGuid(guid)
-end
-
-function isNeedImportByObject(object, data)
-    return true
-end
-
-function importData()
-    if (async.inProcess == true) then
-        print('WARN: async task already started')
-        return
-    end
-    print('Start importing...')
-
-    syncTabs()
-    local dataTab = getTabByName(dataTabName)
-    local parsedData = readDataFromTab(dataTab)
-
-    asyncImportStart(parsedData)
-end
-
-function asyncImportStart(parsedData)
-    print('Import started.')
-    data = parsedData
-    importBackup = {}
-
-    asyncStart(importDataToObjectIfNeed, asyncImportStop)
-end
-
-function asyncImportStop(count)
-    if (config.createImportBackups == true) then
-        local tabName = createImportBackupTab(importBackup, importBackupTabNamePrefix)
-        print('Data backuped to tab "' .. tabName .. '".')
-    else
-        print('Backup is disabled.')
-    end
-
-    print(count .. ' in-game objects imported.')
-
-    self.editButton({
-        index          = 1,
-        label          = importButtonLabel,
-        tooltip        = importButtonTooltip
-    })
-
-    data = nil
-    importBackup = nil
-    print('Import done.')
-end
-
-function createImportBackupTab(backup, tabNamePrefix)
-    local tabName = tabNamePrefix .. '_' .. os.date('%Y-%m-%d_%H:%M:%S')
-    local content = JSON.encode_pretty(backup)
-    addNotebookTab({
-        title = tabName,
-        body  = content,
-        color = tabsColor
-    })
-    return tabName
-end
-
-function objectsComparator(o1, o2)
-    return o1.guid < o2.guid
-end
-
-function objectsFieldsComparator(o1, o2)
-    return o1.guid < o2.guid
-end
-
-function isEmpty(str)
-    if str == nil then
-        return true
-    end
-    if string.len(str) == 0 then
-        return true
-    end
-    return false
-end
-
-function length(table)
-    local count = 0
-    for _ in pairs(table) do
-        count = count + 1
-    end
-    return count
-end
-
-function clone (t) -- deep-copy a table
-    if type(t) ~= "table" then
-        return t
-    end
-    local meta = getmetatable(t)
-    local target = {}
-    for k, v in pairs(t) do
-        if type(v) == "table" then
-            target[k] = clone(v)
-        else
-            target[k] = v
-        end
-    end
-    setmetatable(target, meta)
-    return target
-end
-
+-- INPUTS
 function createButtons()
     self.createButton({
         click_function = 'exportData',
