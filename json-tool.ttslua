@@ -2,7 +2,7 @@
 -- Tool for exporting and importing information about in-game objects in JSON-format.
 
 -- constants
-version = '3.0.1'
+version = '3.1.2'
 url = 'https://github.com/indvd00m/json-tool'
 configTabName = 'json.conf'
 dataTabName = 'json.data'
@@ -41,6 +41,23 @@ importBackup = nil
 nextObjectForManualImport = nil
 
 -- code
+
+-- START OF CONVERTING CODE
+function exportObject(object)
+    local fields = {
+        guid = object.getGUID(),
+        name = object.getName(),
+        description = object.getDescription()
+    }
+    return fields
+end
+
+function importObject(object, fields)
+    object.setName(fields.name)
+    object.setDescription(fields.description)
+end
+-- END OF CONVERTING CODE
+
 function onSave()
     local persistence = {
         config = config
@@ -71,15 +88,14 @@ function onLoad(savedState)
         in-game objects in JSON-format. JsonTool works with Notebook tabs \z
         for all actions. All needed tabs would created automatically. \z
         Exporting and importing processes use tab "' .. dataTabName .. '" for \z
-        saving or getting information in  JSON-format. Before every importing \z
-        and exporting JsonTool would save  backup to tabs with prefix \z
+        saving or getting information in JSON-format. Before every exporting \z
+        and importing JsonTool would save backup to tabs with prefix \z
         "' .. exportBackupTabNamePrefix .. '" and \z
-        "' .. importBackupTabNamePrefix .. '". Export and import \z
-        configuration is saved in tab "' .. configTabName .. '"". Before \z
-        every import and export configuration would be read from this tab. \z
-        \n\nNote: sometimes Tabletop Simulator incorrectly works with \z
-        Notebook tabs. If you did not see any data in created tabs try to \z
-        remove all tabs and then run Export or Import again.\z
+        "' .. importBackupTabNamePrefix .. '". Tool configuration is saved in \z
+        tab "' .. configTabName .. '". This tab would be read before every \z
+        importing and exporting process. JsonTool print information about a \z
+        current process into a Chat window. \z
+        \n\nSee more information at Workshop or GitHub page. \z
         \n\nVersion ' .. version .. '. \n\n' .. url)
     self.setColorTint(mainColor)
 end
@@ -93,6 +109,7 @@ function updateForBackwardCompatibility()
     end
 end
 
+-- START OF TABS CODE
 function syncTabs()
     local configTab = getTabByName(configTabName)
     if (configTab == nil) then
@@ -197,7 +214,9 @@ function writeDataToTab(dataTab, data)
         color = tabsColor
     })
 end
+-- END OF TABS CODE
 
+-- START OF EXPORTING CODE
 function exportData()
     if (async.inProcess == true) then
         print('WARN: async task already started')
@@ -222,12 +241,10 @@ function asyncExportStart()
     print('Export started.')
     data = {}
 
-    asyncStart(exportObjectToDataIfNeed, exportObjectToDataManual, asyncExportStop)
+    asyncStart(exportObjectToDataAuto, exportObjectToDataManual, asyncExportStop)
 end
 
 function asyncExportStop(count)
-    table.sort(data, objectsComparator)
-
     local dataTab = getTabByName(dataTabName)
     writeDataToTab(dataTab, data)
     print(count .. ' in-game objects exported.')
@@ -252,7 +269,7 @@ function createTabBackup(tab, tabNamePrefix)
     return tabName
 end
 
-function exportObjectToDataIfNeed(object)
+function exportObjectToDataAuto(object)
     if
         isNeedExportByGuid(object.guid, data)
         and isNeedExportByObject(object, data)
@@ -262,31 +279,18 @@ function exportObjectToDataIfNeed(object)
     return false
 end
 
-function importDataToObjectIfNeed(object)
-    if
-        isNeedImportByGuid(object.guid, data)
-        and isNeedImportByObject(object, data)
-    then
-        return importDataToObject(object)
-    end
-    return false
-end
-
--- start of exchange data block
-function exportObjectToData(object)
+function updateExportStatus()
     local percent = string.format('%.1f %%', async.progress * 100)
     self.editButton({
         index          = 0,
         label          = percent,
         tooltip        = async.progressCount
     })
+end
 
-    local guid = object.getGUID()
-    data[guid] = {
-        guid = guid,
-        name = object.getName(),
-        description = object.getDescription()
-    }
+function exportObjectToData(object)
+    updateExportStatus()
+    data[object.getGUID()] = exportObject(object)
     return true
 end
 
@@ -302,140 +306,6 @@ function exportObjectToDataManual(object)
     exportObjectToData(object)
     print('Exported: ' .. object.guid .. ' "' .. object.getName() .. '". Pick up next object or press Stop button...')
     return result
-end
-
-function importDataToObject(object)
-    local percent = string.format('%.1f %%', async.progress * 100)
-    self.editButton({
-        index          = 1,
-        label          = percent,
-        tooltip        = async.progressCount
-    })
-
-    local guid = object.getGUID()
-    local fields = data[guid]
-    if (fields == nil) then
-        return false
-    end
-    if (fields.guid ~= guid) then
-        print('WARN: object guid ' .. guid .. ' and data guid ' .. fields.guid .. ' not equals')
-    end
-    -- backup import
-    importBackup[guid] = {
-        guid = guid,
-        name = object.getName(),
-        description = object.getDescription()
-    }
-    -- write data
-    object.setName(fields.name)
-    object.setDescription(fields.description)
-    return true
-end
-
-function importDataToObjectManual(object)
-    local result = false
-    -- importing
-    if (nextObjectForManualImport ~= nil and object ~= nil) then
-        local percent = string.format('%.1f %%', async.progress * 100)
-        self.editButton({
-            index          = 1,
-            label          = percent,
-            tooltip        = async.progressCount
-        })
-
-        if (self.guid == object.guid) then
-            -- mark as skipped
-            if (importBackup[nextObjectForManualImport.guid] == nil) then
-                importBackup[nextObjectForManualImport.guid] = {
-                    guid = '[SKIPPED]',
-                    name = '[SKIPPED]',
-                    description = '[SKIPPED]'
-                }
-            end
-
-            print('Skipping import of this data')
-            result = false
-        else
-            -- backup import
-            if (importBackup[nextObjectForManualImport.guid] == nil) then
-                importBackup[nextObjectForManualImport.guid] = {
-                    guid = object.guid,
-                    name = object.getName(),
-                    description = object.getDescription()
-                }
-            end
-
-            if (nextObjectForManualImport.guid ~= object.guid) then
-                print('WARN: object guid ' .. object.guid .. ' and data guid ' .. nextObjectForManualImport.guid .. ' not equals')
-            end
-
-            -- write data
-            object.setName(nextObjectForManualImport.name)
-            object.setDescription(nextObjectForManualImport.description)
-
-            print('Imported to: ' .. object.guid)
-            result = true
-        end
-    end
-
-    findNextObjectForImport()
-    return result
-end
-
-function findNextObjectForImport()
-    nextObjectForManualImport = nil
-    for index, dataObject in pairs(data) do
-        if (importBackup[dataObject.guid] == nil) then
-            if (nextObjectForManualImport == nil) then
-                nextObjectForManualImport = dataObject
-            else
-                -- find minimal object by field 'name'
-                if (compareObjects(dataObject, nextObjectForManualImport) < 0) then
-                    nextObjectForManualImport = dataObject
-                end
-            end
-        end
-    end
-    if (nextObjectForManualImport != nil) then
-        print('Pick up object for importing this data or press Stop button:\n' .. JSON.encode_pretty(nextObjectForManualImport))
-    else
-        print('All data already manually processed, you can stop importing')
-    end
-end
-
-function compareObjects(object1, object2)
-    local fields = {'name', 'description', 'guid'}
-    for index, fieldName in pairs(fields) do
-        if (object1[fieldName] == nil and object2[fieldName] ~= nil) then
-            return -1
-        end
-        if (object1[fieldName] ~= nil and object2[fieldName] == nil) then
-            return 1
-        end
-        if (object1[fieldName] ~= nil and object2[fieldName] ~= nil) then
-            if (object1[fieldName] < object2[fieldName]) then
-                return -1
-            end
-            if (object1[fieldName] > object2[fieldName]) then
-                return 1
-            end
-        end
-    end
-    return 0
-end
--- end of exchange data block
-
-function isNeedProcessByGuid(guid)
-    if (config.excludeGuids[guid] == true) then
-        return false
-    end
-    if (length(config.includeGuids) > 0) then
-        if (config.includeGuids[guid] == true) then
-            return true
-        end
-        return false
-    end
-    return true
 end
 
 function isNeedExportByGuid(guid, data)
@@ -462,6 +332,100 @@ function isNeedExportByObject(object, data)
         return false
     end
     return true
+end
+-- END OF EXPORTING CODE
+
+-- START OF IMPORTING CODE
+function importDataToObjectAuto(object)
+    if
+        isNeedImportByGuid(object.guid, data)
+        and isNeedImportByObject(object, data)
+    then
+        updateImportStatus()
+
+        local guid = object.getGUID()
+        local fields = data[guid]
+        if (fields == nil) then
+            return false
+        end
+        if (fields.guid ~= guid) then
+            print('WARN: object guid ' .. guid .. ' and data guid ' .. fields.guid .. ' not equals')
+        end
+        -- backup import
+        importBackup[guid] = exportObject(object)
+        -- write data
+        importObject(object, fields)
+        return true
+    end
+    return false
+end
+
+function updateImportStatus()
+    local percent = string.format('%.1f %%', async.progress * 100)
+    self.editButton({
+        index          = 1,
+        label          = percent,
+        tooltip        = async.progressCount
+    })
+end
+
+function importDataToObjectManual(object)
+    local result = false
+    -- importing
+    if (nextObjectForManualImport ~= nil and object ~= nil) then
+        updateImportStatus()
+
+        if (self.guid == object.guid) then
+            -- mark as skipped
+            if (importBackup[nextObjectForManualImport.guid] == nil) then
+                importBackup[nextObjectForManualImport.guid] = {
+                    guid = '[SKIPPED]'
+                }
+            end
+
+            print('Skipping import of this data')
+            result = false
+        else
+            -- backup import
+            if (importBackup[nextObjectForManualImport.guid] == nil) then
+                importBackup[nextObjectForManualImport.guid] = exportObject(object)
+            end
+
+            if (nextObjectForManualImport.guid ~= object.guid) then
+                print('WARN: object guid ' .. object.guid .. ' and data guid ' .. nextObjectForManualImport.guid .. ' not equals')
+            end
+
+            -- write data
+            importObject(object, nextObjectForManualImport)
+
+            print('Imported to: ' .. object.guid)
+            result = true
+        end
+    end
+
+    findNextObjectForImport()
+    return result
+end
+
+function findNextObjectForImport()
+    nextObjectForManualImport = nil
+    for index, dataObject in pairs(data) do
+        if (importBackup[dataObject.guid] == nil) then
+            if (nextObjectForManualImport == nil) then
+                nextObjectForManualImport = dataObject
+            else
+                -- find minimal object by field 'name'
+                if (compareObjects(dataObject, nextObjectForManualImport) < 0) then
+                    nextObjectForManualImport = dataObject
+                end
+            end
+        end
+    end
+    if (nextObjectForManualImport != nil) then
+        print('Pick up object for importing this data (pick up JsonTool for skip), or press Stop button:\n' .. JSON.encode_pretty(nextObjectForManualImport))
+    else
+        print('All data already manually processed, you can stop importing')
+    end
 end
 
 function isNeedImportByGuid(guid, data)
@@ -499,7 +463,7 @@ function asyncImportStart(parsedData)
     importBackup = {}
     nextObjectForManualImport = nil
 
-    asyncStart(importDataToObjectIfNeed, importDataToObjectManual, asyncImportStop)
+    asyncStart(importDataToObjectAuto, importDataToObjectManual, asyncImportStop)
 end
 
 function asyncImportStop(count)
@@ -534,13 +498,27 @@ function createImportBackupTab(backup, tabNamePrefix)
     })
     return tabName
 end
+-- END OF IMPORTING CODE
 
-function objectsComparator(o1, o2)
-    return o1.guid < o2.guid
-end
-
-function objectsFieldsComparator(o1, o2)
-    return o1.guid < o2.guid
+function compareObjects(object1, object2)
+    local fields = {'name', 'description', 'guid'}
+    for index, fieldName in pairs(fields) do
+        if (object1[fieldName] == nil and object2[fieldName] ~= nil) then
+            return -1
+        end
+        if (object1[fieldName] ~= nil and object2[fieldName] == nil) then
+            return 1
+        end
+        if (object1[fieldName] ~= nil and object2[fieldName] ~= nil) then
+            if (object1[fieldName] < object2[fieldName]) then
+                return -1
+            end
+            if (object1[fieldName] > object2[fieldName]) then
+                return 1
+            end
+        end
+    end
+    return 0
 end
 
 function isEmpty(str)
@@ -561,7 +539,7 @@ function length(table)
     return count
 end
 
-function clone (t) -- deep-copy a table
+function clone (t)
     if type(t) ~= "table" then
         return t
     end
@@ -593,6 +571,19 @@ async = {
     finishListener = nil,
     count = 0
 }
+
+function isNeedProcessByGuid(guid)
+    if (config.excludeGuids[guid] == true) then
+        return false
+    end
+    if (length(config.includeGuids) > 0) then
+        if (config.includeGuids[guid] == true) then
+            return true
+        end
+        return false
+    end
+    return true
+end
 
 function onObjectPickedUp(playerColor, object)
     if (async.inProcess == true and async.mode == 'manual') then
